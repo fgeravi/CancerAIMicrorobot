@@ -31,7 +31,11 @@ class EvaluationResult:
     false_negative_rate: float
 
 
-def safe_divide(numerator: int, denominator: int) -> float:
+def safe_divide(
+    numerator: int,
+    denominator: int,
+) -> float:
+
     if denominator == 0:
         return 0.0
 
@@ -40,7 +44,7 @@ def safe_divide(numerator: int, denominator: int) -> float:
 
 def evaluate_population(
     cells: list[Cell],
-    classifier: CancerCellClassifier,
+    classifier,
     decision_engine: DecisionEngine,
 ) -> EvaluationResult:
 
@@ -57,20 +61,42 @@ def evaluate_population(
     pass_decisions = 0
     uncertain_decisions = 0
 
-    cancer_cells = 0
-    healthy_cells = 0
+    cancer_cells = sum(
+        1
+        for cell in cells
+        if cell.actual_cancer
+    )
 
-    for cell in cells:
+    healthy_cells = (
+        len(cells) - cancer_cells
+    )
 
-        if cell.actual_cancer:
-            cancer_cells += 1
-        else:
-            healthy_cells += 1
+    # ML classifiers can process the entire population
+    # in one efficient model call.
+    if hasattr(classifier, "predict_batch"):
 
-        classification = classifier.predict(cell)
-        decision = decision_engine.decide(classification)
+        classifications = (
+            classifier.predict_batch(cells)
+        )
+
+    else:
+
+        classifications = [
+            classifier.predict(cell)
+            for cell in cells
+        ]
+
+    for cell, classification in zip(
+        cells,
+        classifications,
+    ):
+
+        decision = decision_engine.decide(
+            classification
+        )
 
         if decision.action == "TARGET":
+
             target_decisions += 1
 
             if cell.actual_cancer:
@@ -79,6 +105,7 @@ def evaluate_population(
                 false_positives += 1
 
         elif decision.action == "PASS":
+
             pass_decisions += 1
 
             if cell.actual_cancer:
@@ -87,6 +114,7 @@ def evaluate_population(
                 true_negatives += 1
 
         else:
+
             uncertain_decisions += 1
 
             if cell.actual_cancer:
