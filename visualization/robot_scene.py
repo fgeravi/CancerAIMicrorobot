@@ -1,3 +1,5 @@
+import math
+
 import pygame
 
 
@@ -7,14 +9,11 @@ class VisualMicrorobot:
         self,
         x: float,
         y: float,
-        speed: float = 150.0,
+        speed: float = 155.0,
     ):
-        self.position = pygame.Vector2(
-            x,
-            y,
-        )
-
+        self.position = pygame.Vector2(x, y)
         self.speed = speed
+        self.angle = 0.0
 
     def move_toward(
         self,
@@ -22,10 +21,7 @@ class VisualMicrorobot:
         delta_time: float,
     ) -> bool:
 
-        difference = (
-            target - self.position
-        )
-
+        difference = target - self.position
         distance = difference.length()
 
         if distance < 2.0:
@@ -33,6 +29,11 @@ class VisualMicrorobot:
             return True
 
         direction = difference.normalize()
+
+        self.angle = math.atan2(
+            direction.y,
+            direction.x,
+        )
 
         movement = (
             direction
@@ -48,9 +49,19 @@ class VisualMicrorobot:
 
         return False
 
+    def reset(
+        self,
+        x: float,
+        y: float,
+    ) -> None:
+        self.position.update(x, y)
+        self.angle = 0.0
+
     def draw(
         self,
         surface: pygame.Surface,
+        scanning: bool = False,
+        pulse: float = 0.0,
     ) -> None:
 
         center = (
@@ -58,43 +69,78 @@ class VisualMicrorobot:
             int(self.position.y),
         )
 
-        # Outer robot body
+        # Scan radius pulse
+        if scanning:
+            scan_radius = int(
+                22 + pulse * 24
+            )
+
+            pygame.draw.circle(
+                surface,
+                (75, 145, 195),
+                center,
+                scan_radius,
+                2,
+            )
+
+        # Four small sensor arms
+        for offset in [
+            (-18, 0),
+            (18, 0),
+            (0, -18),
+            (0, 18),
+        ]:
+            pygame.draw.line(
+                surface,
+                (125, 195, 225),
+                center,
+                (
+                    center[0] + offset[0],
+                    center[1] + offset[1],
+                ),
+                3,
+            )
+
         pygame.draw.circle(
             surface,
-            (75, 165, 220),
+            (65, 155, 215),
             center,
-            12,
+            13,
         )
 
         pygame.draw.circle(
             surface,
-            (220, 240, 250),
+            (215, 235, 245),
             center,
-            12,
+            13,
             2,
         )
 
-        # Inner core
         pygame.draw.circle(
             surface,
-            (25, 70, 100),
+            (25, 65, 95),
             center,
-            5,
+            6,
         )
 
-        # Sensor arms
-        pygame.draw.line(
-            surface,
-            (150, 210, 240),
-            (center[0] - 16, center[1]),
-            (center[0] + 16, center[1]),
-            2,
+        # Direction indicator
+        direction = pygame.Vector2(
+            math.cos(self.angle),
+            math.sin(self.angle),
+        )
+
+        endpoint = (
+            self.position
+            + direction * 19
         )
 
         pygame.draw.line(
             surface,
-            (150, 210, 240),
-            (center[0], center[1] - 16),
-            (center[0], center[1] + 16),
+            (235, 240, 245),
+            center,
+            (
+                int(endpoint.x),
+                int(endpoint.y),
+            ),
             2,
         )
