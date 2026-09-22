@@ -12,12 +12,15 @@ from src.simulation.navigation import (
     find_nearest_available_cell,
     release_cell,
 )
+from src.simulation.exploration import (
+    next_exploration_point,
+)
 
 from visualization.cell_scene import VisualCell
 
 
-WIDTH = 1280
-HEIGHT = 800
+WIDTH = 1440
+HEIGHT = 960
 
 SIMULATION_LEFT = 20
 SIMULATION_TOP = 20
@@ -25,6 +28,8 @@ SIMULATION_WIDTH = 870
 SIMULATION_HEIGHT = 760
 
 PANEL_X = 910
+PANEL_WIDTH = WIDTH - PANEL_X - 20
+FOOTER_Y = 850
 
 FPS = 60
 CELL_COUNT = 42
@@ -300,12 +305,144 @@ def draw_button(
     )
 
 
+def draw_swarm_status(
+    surface,
+    font,
+    swarm,
+    x,
+    y,
+):
+    """
+    Draw live state and AI output for every
+    simulated robot in the swarm.
+    """
+
+    state_colors = {
+        "SEARCHING": (155, 165, 220),
+        "EXPLORING": (105, 205, 185),
+        "TRAVELING": (100, 175, 225),
+        "SCANNING": (225, 185, 70),
+        "DECIDING": (190, 135, 220),
+    }
+
+    action_colors = {
+        "TARGET": (225, 85, 90),
+        "PASS": (85, 205, 135),
+        "UNCERTAIN": (230, 190, 70),
+    }
+
+    draw_text(
+        surface,
+        font,
+        "SWARM AI STATUS",
+        x,
+        y,
+        (165, 170, 180),
+    )
+
+    row_y = y + 26
+
+    for agent in swarm.agents:
+
+        target = "--"
+        probability = "--"
+        action = "--"
+
+        if agent.current_cell is not None:
+            target = (
+                f"{agent.current_cell.cell.cell_id:02d}"
+            )
+
+        if agent.result is not None:
+            probability = (
+                f"{agent.result.cancer_probability:.1%}"
+            )
+
+        if agent.decision is not None:
+            action = agent.decision.action
+
+        state_color = state_colors.get(
+            agent.state,
+            (180, 180, 185),
+        )
+
+        draw_text(
+            surface,
+            font,
+            f"R{agent.robot_id}",
+            x,
+            row_y,
+            (225, 230, 240),
+        )
+
+        draw_text(
+            surface,
+            font,
+            f"{agent.state:<9}",
+            x + 32,
+            row_y,
+            state_color,
+        )
+
+        draw_text(
+            surface,
+            font,
+            f"C:{target}",
+            x + 125,
+            row_y,
+            (180, 185, 195),
+        )
+
+        draw_text(
+            surface,
+            font,
+            probability,
+            x + 180,
+            row_y,
+            (
+                action_colors.get(
+                    action,
+                    (180, 185, 195),
+                )
+            ),
+        )
+
+        draw_text(
+            surface,
+            font,
+            action,
+            x + 255,
+            row_y,
+            (
+                action_colors.get(
+                    action,
+                    (180, 185, 195),
+                )
+            ),
+        )
+
+        draw_text(
+            surface,
+            font,
+            (
+                f"{agent.visual.distance_traveled:.0f}px"
+            ),
+            x + 365,
+            row_y,
+            (145, 150, 160),
+        )
+
+        row_y += 24
+
+
+
 def main():
 
     pygame.init()
 
     screen = pygame.display.set_mode(
-        (WIDTH, HEIGHT)
+        (WIDTH, HEIGHT),
+        pygame.RESIZABLE,
     )
 
     pygame.display.set_caption(
@@ -341,38 +478,40 @@ def main():
         pass_threshold=0.30,
     )
 
+    # All interactive controls live in the
+    # dedicated footer below the information panel.
     pause_button = pygame.Rect(
-        935,
-        705,
+        930,
+        880,
         90,
-        40,
+        38,
     )
 
     restart_button = pygame.Rect(
-        1035,
-        705,
+        1030,
+        880,
         90,
-        40,
+        38,
     )
 
     truth_button = pygame.Rect(
-        1135,
-        705,
+        1130,
+        880,
         110,
-        40,
+        38,
     )
 
     speed_down_button = pygame.Rect(
-        935,
-        650,
-        55,
+        1300,
+        880,
+        42,
         38,
     )
 
     speed_up_button = pygame.Rect(
-        1000,
-        650,
-        55,
+        1352,
+        880,
+        42,
         38,
     )
 
@@ -629,7 +768,7 @@ def main():
                         )
 
                         state["history"] = (
-                            state["history"][:4]
+                            state["history"][:3]
                         )
 
                         state["scanned"] += 1
@@ -775,6 +914,8 @@ def main():
                 screen,
                 scanning=agent.scanning,
                 pulse=pulse,
+                robot_id=agent.robot_id,
+                font=small_font,
             )
 
         # Panel
@@ -784,8 +925,8 @@ def main():
             (
                 PANEL_X,
                 20,
-                WIDTH - PANEL_X - 20,
-                760,
+                PANEL_WIDTH,
+                810,
             ),
             border_radius=12,
         )
@@ -808,7 +949,7 @@ def main():
             screen,
             small_font,
             status,
-            1160,
+            1325,
             48,
             (
                 (225, 185, 70)
@@ -851,7 +992,7 @@ def main():
             screen,
             font,
             f"PASS        {state['passes']}",
-            1060,
+            1115,
             135,
             (90, 200, 135),
         )
@@ -929,75 +1070,24 @@ def main():
                 390,
             )
 
-        scanning_agent = next(
-            (
-                agent
-                for agent in swarm.agents
-                if (
-                    agent.scanning
-                    and agent.result
-                    and agent.decision
-                )
-            ),
-            None,
+        draw_swarm_status(
+            screen,
+            small_font,
+            swarm,
+            935,
+            445,
         )
-
-        if scanning_agent is not None:
-
-            probability = (
-                scanning_agent.result
-                .cancer_probability
-            )
-
-            action = (
-                scanning_agent.decision.action
-            )
-
-            colors = {
-                "TARGET": (225, 85, 90),
-                "PASS": (85, 205, 135),
-                "UNCERTAIN": (
-                    230,
-                    190,
-                    70,
-                ),
-            }
-
-            draw_text(
-                screen,
-                small_font,
-                "AI CANCER PROBABILITY",
-                935,
-                445,
-            )
-
-            draw_text(
-                screen,
-                title_font,
-                f"{probability:.1%}",
-                935,
-                467,
-            )
-
-            draw_text(
-                screen,
-                title_font,
-                action,
-                1050,
-                467,
-                colors[action],
-            )
 
         draw_text(
             screen,
             small_font,
             "RECENT DECISIONS",
             935,
-            500,
+            575,
             (160, 165, 175),
         )
 
-        history_y = 525
+        history_y = 602
 
         for (
             cell_id,
@@ -1028,8 +1118,8 @@ def main():
                 f"Correct targets: "
                 f"{state['correct_targets']}"
             ),
-            1100,
-            500,
+            1245,
+            602,
             (150, 155, 165),
         )
 
@@ -1040,20 +1130,50 @@ def main():
                 f"False targets: "
                 f"{state['false_targets']}"
             ),
-            1100,
-            523,
+            1245,
+            625,
             (150, 155, 165),
+        )
+
+        # Dedicated footer keeps controls separate
+        # from simulation statistics.
+        pygame.draw.rect(
+            screen,
+            (29, 33, 41),
+            (
+                20,
+                850,
+                WIDTH - 40,
+                90,
+            ),
+            border_radius=12,
         )
 
         draw_text(
             screen,
             small_font,
-            (
-                f"Speed: "
-                f"{simulation_speed:.2f}x"
-            ),
-            1070,
-            660,
+            "CONTROLS",
+            45,
+            865,
+            (160, 165, 175),
+        )
+
+        draw_text(
+            screen,
+            small_font,
+            "SPACE Pause   R Restart   G Ground Truth   ESC Exit",
+            45,
+            895,
+            (190, 195, 205),
+        )
+
+        draw_text(
+            screen,
+            small_font,
+            f"SPEED  {simulation_speed:.2f}x",
+            1280,
+            855,
+            (160, 165, 175),
         )
 
         draw_button(
@@ -1101,15 +1221,6 @@ def main():
             active=not show_ground_truth,
         )
 
-        draw_text(
-            screen,
-            small_font,
-            "SPACE pause | R restart | G truth | +/- speed | ESC exit",
-            45,
-            750,
-            (135, 140, 150),
-        )
-
         if state["scanned"] >= len(
             visual_cells
         ):
@@ -1118,8 +1229,8 @@ def main():
                 screen,
                 title_font,
                 "SIMULATION COMPLETE",
-                935,
-                205,
+                350,
+                735,
                 (90, 205, 135),
             )
 

@@ -13,8 +13,10 @@ class VisualMicrorobot:
         sensor_range: float = 170.0,
     ):
         self.position = pygame.Vector2(x, y)
+
         self.speed = speed
         self.sensor_range = sensor_range
+
         self.angle = 0.0
         self.distance_traveled = 0.0
 
@@ -46,12 +48,18 @@ class VisualMicrorobot:
         )
 
         if movement.length() >= distance:
+
             self.distance_traveled += distance
+
             self.position = target.copy()
+
             return True
 
         self.position += movement
-        self.distance_traveled += movement.length()
+
+        self.distance_traveled += (
+            movement.length()
+        )
 
         return False
 
@@ -62,6 +70,7 @@ class VisualMicrorobot:
     ) -> None:
 
         self.position.update(x, y)
+
         self.angle = 0.0
         self.distance_traveled = 0.0
 
@@ -75,28 +84,28 @@ class VisualMicrorobot:
             int(self.position.y),
         )
 
-        sensor_surface = pygame.Surface(
+        overlay = pygame.Surface(
             surface.get_size(),
             pygame.SRCALPHA,
         )
 
         pygame.draw.circle(
-            sensor_surface,
-            (75, 145, 195, 18),
+            overlay,
+            (75, 145, 195, 12),
             center,
             int(self.sensor_range),
         )
 
         pygame.draw.circle(
-            sensor_surface,
-            (85, 155, 205, 55),
+            overlay,
+            (85, 155, 205, 40),
             center,
             int(self.sensor_range),
             1,
         )
 
         surface.blit(
-            sensor_surface,
+            overlay,
             (0, 0),
         )
 
@@ -105,6 +114,8 @@ class VisualMicrorobot:
         surface: pygame.Surface,
         scanning: bool = False,
         pulse: float = 0.0,
+        robot_id: int | None = None,
+        font: pygame.font.Font | None = None,
     ) -> None:
 
         center = (
@@ -113,6 +124,7 @@ class VisualMicrorobot:
         )
 
         if scanning:
+
             scan_radius = int(
                 22 + pulse * 24
             )
@@ -131,6 +143,7 @@ class VisualMicrorobot:
             (0, -18),
             (0, 18),
         ]:
+
             pygame.draw.line(
                 surface,
                 (125, 195, 225),
@@ -184,3 +197,38 @@ class VisualMicrorobot:
             ),
             2,
         )
+
+        if (
+            robot_id is not None
+            and font is not None
+        ):
+
+            label = font.render(
+                f"R{robot_id}",
+                True,
+                (235, 240, 245),
+            )
+
+            label_rect = label.get_rect(
+                center=(
+                    center[0],
+                    center[1] - 29,
+                )
+            )
+
+            background = label_rect.inflate(
+                8,
+                4,
+            )
+
+            pygame.draw.rect(
+                surface,
+                (35, 42, 52),
+                background,
+                border_radius=5,
+            )
+
+            surface.blit(
+                label,
+                label_rect,
+            )

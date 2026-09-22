@@ -1,44 +1,79 @@
 def find_nearest_available_cell(
     robot,
     visual_cells,
+    sensor_limited: bool = False,
 ):
     """
-    Find the nearest cell that has not been scanned
-    and is not already claimed by another robot.
+    Find the nearest available cell.
 
-    This navigation function uses spatial position only.
-    It does not use hidden cancer ground truth.
+    When sensor_limited is True, only cells inside
+    the robot's simulated sensor range are visible.
+
+    Navigation never uses hidden cancer ground truth.
     """
 
-    candidates = [
+    candidates = []
+
+    for cell in visual_cells:
+
+        if cell.scanned:
+            continue
+
+        if cell.claimed_by is not None:
+            continue
+
+        distance = (
+            robot.position.distance_to(
+                cell.position()
+            )
+        )
+
+        if (
+            sensor_limited
+            and distance > robot.sensor_range
+        ):
+            continue
+
+        candidates.append(
+            (distance, cell)
+        )
+
+    if not candidates:
+        return None
+
+    candidates.sort(
+        key=lambda item: item[0]
+    )
+
+    return candidates[0][1]
+
+
+def cells_in_sensor_range(
+    robot,
+    visual_cells,
+):
+    """
+    Return currently detectable, unscanned cells.
+    """
+
+    return [
         cell
         for cell in visual_cells
         if (
             not cell.scanned
             and cell.claimed_by is None
-        )
-    ]
-
-    if not candidates:
-        return None
-
-    return min(
-        candidates,
-        key=lambda cell: (
-            robot.position.distance_to(
+            and robot.position.distance_to(
                 cell.position()
             )
-        ),
-    )
+            <= robot.sensor_range
+        )
+    ]
 
 
 def claim_cell(
     cell,
     robot_id: int,
 ) -> bool:
-    """
-    Attempt to reserve a cell for one robot.
-    """
 
     if cell.scanned:
         return False
@@ -55,10 +90,6 @@ def release_cell(
     cell,
     robot_id: int,
 ) -> None:
-    """
-    Release a reservation only if it belongs
-    to the requesting robot.
-    """
 
     if cell.claimed_by == robot_id:
         cell.claimed_by = None
