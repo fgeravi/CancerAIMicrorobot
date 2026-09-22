@@ -6,14 +6,9 @@ import pygame
 from src.ai.decision_engine import DecisionEngine
 from src.ai.ml_classifier import MLCancerCellClassifier
 from src.simulation.environment import CellEnvironment
-from src.simulation.swarm import RobotSwarm
-from src.simulation.navigation import (
-    claim_cell,
-    find_nearest_available_cell,
-    release_cell,
-)
 
 from visualization.cell_scene import VisualCell
+from visualization.robot_scene import VisualMicrorobot
 
 
 WIDTH = 1280
@@ -380,17 +375,19 @@ def main():
 
         visual_cells = create_visual_cells()
 
-        swarm = RobotSwarm(
-            robot_count=4,
-            start_x=60,
-            start_y=400,
-            spacing=42,
-            speed=155,
+        robot = VisualMicrorobot(
+            x=60,
+            y=HEIGHT / 2,
         )
 
         return {
             "cells": visual_cells,
-            "swarm": swarm,
+            "robot": robot,
+            "index": 0,
+            "result": None,
+            "decision": None,
+            "scanning": False,
+            "scan_timer": 0.0,
             "scanned": 0,
             "targets": 0,
             "passes": 0,
@@ -496,151 +493,102 @@ def main():
                         )
 
         visual_cells = state["cells"]
-        swarm = state["swarm"]
+        robot = state["robot"]
 
         if (
             not paused
-            and state["scanned"]
+            and state["index"]
             < len(visual_cells)
         ):
 
-            for agent in swarm.agents:
+            current_cell = visual_cells[
+                state["index"]
+            ]
 
-                robot = agent.visual
+            if not state["scanning"]:
 
-                # SEARCHING
-                if agent.current_cell is None:
+                arrived = robot.move_toward(
+                    current_cell.position(),
+                    delta_time,
+                )
 
-                    agent.state = "SEARCHING"
+                if arrived:
 
-                    candidate = (
-                        find_nearest_available_cell(
-                            robot,
-                            visual_cells,
+                    state["result"] = (
+                        classifier.predict(
+                            current_cell.cell
                         )
                     )
 
-                    if (
-                        candidate is not None
-                        and claim_cell(
-                            candidate,
-                            agent.robot_id,
+                    state["decision"] = (
+                        decision_engine.decide(
+                            state["result"]
                         )
-                    ):
-                        agent.current_cell = candidate
-
-                current_cell = agent.current_cell
-
-                if current_cell is None:
-                    continue
-
-                # TRAVELING
-                if not agent.scanning:
-
-                    agent.state = "TRAVELING"
-
-                    arrived = robot.move_toward(
-                        current_cell.position(),
-                        delta_time,
                     )
 
-                    if arrived:
+                    current_cell.scanned = True
 
-                        agent.state = "SCANNING"
+                    state["scanning"] = True
+                    state["scan_timer"] = 0.0
 
-                        agent.result = (
-                            classifier.predict(
-                                current_cell.cell
-                            )
-                        )
+            else:
 
-                        agent.decision = (
-                            decision_engine.decide(
-                                agent.result
-                            )
-                        )
+                state["scan_timer"] += (
+                    delta_time
+                )
 
-                        current_cell.scanned = True
+                if state["scan_timer"] >= 1.25:
 
-                        agent.scanning = True
-                        agent.scan_timer = 0.0
+                    action = (
+                        state["decision"].action
+                    )
 
-                # SCANNING
-                else:
+                    probability = (
+                        state["result"]
+                        .cancer_probability
+                    )
 
-                    agent.state = "SCANNING"
+                    if action == "TARGET":
 
-                    agent.scan_timer += delta_time
+                        state["targets"] += 1
+                        current_cell.targeted = True
 
-                    if agent.scan_timer >= 1.25:
-
-                        agent.state = "DECIDING"
-
-                        action = (
-                            agent.decision.action
-                        )
-
-                        probability = (
-                            agent.result
-                            .cancer_probability
-                        )
-
-                        if action == "TARGET":
-
-                            state["targets"] += 1
-                            agent.targets += 1
-
-                            current_cell.targeted = True
-
-                            if (
-                                current_cell
-                                .cell
-                                .actual_cancer
-                            ):
-                                state[
-                                    "correct_targets"
-                                ] += 1
-
-                            else:
-                                state[
-                                    "false_targets"
-                                ] += 1
-
-                        elif action == "PASS":
-
-                            state["passes"] += 1
-                            agent.passes += 1
-
+                        if current_cell.cell.actual_cancer:
+                            state[
+                                "correct_targets"
+                            ] += 1
                         else:
+                            state[
+                                "false_targets"
+                            ] += 1
 
-                            state["uncertain"] += 1
-                            agent.uncertain += 1
+                    elif action == "PASS":
 
-                            current_cell.uncertain = True
+                        state["passes"] += 1
 
-                        state["history"].insert(
-                            0,
-                            (
-                                current_cell.cell.cell_id,
-                                action,
-                                probability,
-                                agent.robot_id,
-                            ),
-                        )
+                    else:
 
-                        state["history"] = (
-                            state["history"][:4]
-                        )
+                        state["uncertain"] += 1
+                        current_cell.uncertain = True
 
-                        state["scanned"] += 1
-                        agent.cells_scanned += 1
+                    state["history"].insert(
+                        0,
+                        (
+                            current_cell.cell.cell_id,
+                            action,
+                            probability,
+                        ),
+                    )
 
-                        release_cell(
-                            current_cell,
-                            agent.robot_id,
-                        )
+                    state["history"] = (
+                        state["history"][:4]
+                    )
 
-                        agent.clear_target()
+                    state["scanned"] += 1
+                    state["index"] += 1
+
+                    state["scanning"] = False
+                    state["scan_timer"] = 0.0
 
         screen.fill(
             (15, 18, 24)
@@ -716,66 +664,34 @@ def main():
             (180, 105, 115),
         )
 
-        for visual_cell in visual_cells:
+        for index, visual_cell in enumerate(
+            visual_cells
+        ):
 
             visual_cell.draw(
                 screen,
-                selected=any(
-                    visual_cell
-                    is agent.current_cell
-                    for agent in swarm.agents
+                selected=(
+                    index == state["index"]
+                    and state["index"]
+                    < len(visual_cells)
                 ),
                 show_ground_truth=(
                     show_ground_truth
                 ),
             )
 
-        # Draw navigation paths and sensor ranges
-        # for every robot in the swarm.
-        for agent in swarm.agents:
-
-            robot = agent.visual
-            current_cell = agent.current_cell
-
-            if (
-                current_cell is not None
-                and not agent.scanning
-            ):
-                pygame.draw.line(
-                    screen,
-                    (70, 105, 125),
-                    (
-                        int(robot.position.x),
-                        int(robot.position.y),
-                    ),
-                    (
-                        int(current_cell.x),
-                        int(current_cell.y),
-                    ),
-                    1,
-                )
-
-            robot.draw_sensor_range(
-                screen
+        pulse = (
+            math.sin(
+                state["scan_timer"] * 7
             )
+            + 1
+        ) / 2
 
-        # Draw robot bodies after sensor overlays.
-        for agent in swarm.agents:
-
-            robot = agent.visual
-
-            pulse = (
-                math.sin(
-                    agent.scan_timer * 7
-                )
-                + 1
-            ) / 2
-
-            robot.draw(
-                screen,
-                scanning=agent.scanning,
-                pulse=pulse,
-            )
+        robot.draw(
+            screen,
+            scanning=state["scanning"],
+            pulse=pulse,
+        )
 
         # Panel
         pygame.draw.rect(
@@ -828,22 +744,10 @@ def main():
 
         draw_text(
             screen,
-            small_font,
-            (
-                f"Swarm distance: "
-                f"{swarm.total_distance:.0f} px"
-            ),
-            935,
-            108,
-            (155, 165, 180),
-        )
-
-        draw_text(
-            screen,
             font,
             f"TARGET      {state['targets']}",
             935,
-            135,
+            115,
             (220, 90, 95),
         )
 
@@ -852,7 +756,7 @@ def main():
             font,
             f"PASS        {state['passes']}",
             1060,
-            135,
+            115,
             (90, 200, 135),
         )
 
@@ -861,7 +765,7 @@ def main():
             font,
             f"UNCERTAIN   {state['uncertain']}",
             935,
-            160,
+            145,
             (225, 185, 70),
         )
 
@@ -872,25 +776,20 @@ def main():
             (1245, 180),
         )
 
-        active_agent = next(
-            (
-                agent
-                for agent in swarm.agents
-                if agent.current_cell is not None
-            ),
-            None,
-        )
+        if state["index"] < len(
+            visual_cells
+        ):
 
-        if active_agent is not None:
-
-            cell = active_agent.current_cell.cell
+            cell = visual_cells[
+                state["index"]
+            ].cell
 
             draw_text(
                 screen,
                 title_font,
                 f"CELL {cell.cell_id}",
                 935,
-                215,
+                200,
             )
 
             draw_feature_bar(
@@ -899,7 +798,7 @@ def main():
                 "Marker A",
                 cell.marker_a,
                 935,
-                255,
+                240,
             )
 
             draw_feature_bar(
@@ -908,7 +807,7 @@ def main():
                 "Marker B",
                 cell.marker_b,
                 935,
-                300,
+                285,
             )
 
             draw_feature_bar(
@@ -917,7 +816,7 @@ def main():
                 "Irregularity",
                 cell.irregularity,
                 935,
-                345,
+                330,
             )
 
             draw_feature_bar(
@@ -926,31 +825,22 @@ def main():
                 "Growth Signal",
                 cell.growth_signal,
                 935,
-                390,
+                375,
             )
 
-        scanning_agent = next(
-            (
-                agent
-                for agent in swarm.agents
-                if (
-                    agent.scanning
-                    and agent.result
-                    and agent.decision
-                )
-            ),
-            None,
-        )
-
-        if scanning_agent is not None:
+        if (
+            state["scanning"]
+            and state["result"]
+            and state["decision"]
+        ):
 
             probability = (
-                scanning_agent.result
+                state["result"]
                 .cancer_probability
             )
 
             action = (
-                scanning_agent.decision.action
+                state["decision"].action
             )
 
             colors = {
@@ -968,7 +858,7 @@ def main():
                 small_font,
                 "AI CANCER PROBABILITY",
                 935,
-                445,
+                430,
             )
 
             draw_text(
@@ -976,7 +866,7 @@ def main():
                 title_font,
                 f"{probability:.1%}",
                 935,
-                467,
+                452,
             )
 
             draw_text(
@@ -984,7 +874,7 @@ def main():
                 title_font,
                 action,
                 1050,
-                467,
+                452,
                 colors[action],
             )
 
@@ -1003,14 +893,12 @@ def main():
             cell_id,
             action,
             probability,
-            robot_id,
         ) in state["history"]:
 
             draw_text(
                 screen,
                 small_font,
                 (
-                    f"R{robot_id}  "
                     f"Cell {cell_id:02d}  "
                     f"{action:<9} "
                     f"{probability:>6.1%}"
@@ -1110,7 +998,7 @@ def main():
             (135, 140, 150),
         )
 
-        if state["scanned"] >= len(
+        if state["index"] >= len(
             visual_cells
         ):
 

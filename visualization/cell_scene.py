@@ -16,6 +16,10 @@ class VisualCell:
     scanned: bool = False
     uncertain: bool = False
 
+    # ID of the robot currently traveling to or
+    # scanning this cell.
+    claimed_by: int | None = None
+
     def position(self) -> pygame.Vector2:
         return pygame.Vector2(self.x, self.y)
 

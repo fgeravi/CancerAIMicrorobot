@@ -13,8 +13,10 @@ class VisualMicrorobot:
         sensor_range: float = 170.0,
     ):
         self.position = pygame.Vector2(x, y)
+
         self.speed = speed
         self.sensor_range = sensor_range
+
         self.angle = 0.0
         self.distance_traveled = 0.0
 
@@ -28,7 +30,6 @@ class VisualMicrorobot:
         distance = difference.length()
 
         if distance < 2.0:
-            self.distance_traveled += distance
             self.position = target.copy()
             return True
 
@@ -46,12 +47,17 @@ class VisualMicrorobot:
         )
 
         if movement.length() >= distance:
+
             self.distance_traveled += distance
+
             self.position = target.copy()
+
             return True
 
         self.position += movement
-        self.distance_traveled += movement.length()
+        self.distance_traveled += (
+            movement.length()
+        )
 
         return False
 
@@ -62,6 +68,7 @@ class VisualMicrorobot:
     ) -> None:
 
         self.position.update(x, y)
+
         self.angle = 0.0
         self.distance_traveled = 0.0
 
@@ -113,6 +120,7 @@ class VisualMicrorobot:
         )
 
         if scanning:
+
             scan_radius = int(
                 22 + pulse * 24
             )
@@ -131,6 +139,7 @@ class VisualMicrorobot:
             (0, -18),
             (0, 18),
         ]:
+
             pygame.draw.line(
                 surface,
                 (125, 195, 225),

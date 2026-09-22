@@ -6,14 +6,9 @@ import pygame
 from src.ai.decision_engine import DecisionEngine
 from src.ai.ml_classifier import MLCancerCellClassifier
 from src.simulation.environment import CellEnvironment
-from src.simulation.swarm import RobotSwarm
-from src.simulation.navigation import (
-    claim_cell,
-    find_nearest_available_cell,
-    release_cell,
-)
 
 from visualization.cell_scene import VisualCell
+from visualization.robot_scene import VisualMicrorobot
 
 
 WIDTH = 1280
@@ -180,6 +175,39 @@ def create_visual_cells():
             )
 
     return visual_cells
+
+
+def find_nearest_unscanned_cell(
+    robot,
+    visual_cells,
+):
+    """
+    Select the nearest cell that has not yet been scanned.
+
+    Navigation uses spatial position only. It does not have
+    access to the cell's hidden cancer ground truth.
+    """
+
+    candidates = [
+        cell
+        for cell in visual_cells
+        if (
+            not cell.scanned
+            and cell.claimed_by is None
+        )
+    ]
+
+    if not candidates:
+        return None
+
+    return min(
+        candidates,
+        key=lambda cell: (
+            robot.position.distance_to(
+                cell.position()
+            )
+        ),
+    )
 
 
 def draw_text(
@@ -380,17 +408,20 @@ def main():
 
         visual_cells = create_visual_cells()
 
-        swarm = RobotSwarm(
-            robot_count=4,
-            start_x=60,
-            start_y=400,
-            spacing=42,
-            speed=155,
+        robot = VisualMicrorobot(
+            x=60,
+            y=HEIGHT / 2,
         )
 
         return {
             "cells": visual_cells,
-            "swarm": swarm,
+            "robot": robot,
+            "current_cell": None,
+            "robot_state": "SEARCHING",
+            "result": None,
+            "decision": None,
+            "scanning": False,
+            "scan_timer": 0.0,
             "scanned": 0,
             "targets": 0,
             "passes": 0,
@@ -496,7 +527,7 @@ def main():
                         )
 
         visual_cells = state["cells"]
-        swarm = state["swarm"]
+        robot = state["robot"]
 
         if (
             not paused
@@ -504,40 +535,26 @@ def main():
             < len(visual_cells)
         ):
 
-            for agent in swarm.agents:
+            # Find a destination whenever the robot
+            # does not currently have one.
+            if state["current_cell"] is None:
 
-                robot = agent.visual
+                state["robot_state"] = "SEARCHING"
 
-                # SEARCHING
-                if agent.current_cell is None:
-
-                    agent.state = "SEARCHING"
-
-                    candidate = (
-                        find_nearest_available_cell(
-                            robot,
-                            visual_cells,
-                        )
+                state["current_cell"] = (
+                    find_nearest_unscanned_cell(
+                        robot,
+                        visual_cells,
                     )
+                )
 
-                    if (
-                        candidate is not None
-                        and claim_cell(
-                            candidate,
-                            agent.robot_id,
-                        )
-                    ):
-                        agent.current_cell = candidate
+            current_cell = state["current_cell"]
 
-                current_cell = agent.current_cell
+            if current_cell is not None:
 
-                if current_cell is None:
-                    continue
+                if not state["scanning"]:
 
-                # TRAVELING
-                if not agent.scanning:
-
-                    agent.state = "TRAVELING"
+                    state["robot_state"] = "TRAVELING"
 
                     arrived = robot.move_toward(
                         current_cell.position(),
@@ -546,50 +563,47 @@ def main():
 
                     if arrived:
 
-                        agent.state = "SCANNING"
+                        state["robot_state"] = "SCANNING"
 
-                        agent.result = (
+                        state["result"] = (
                             classifier.predict(
                                 current_cell.cell
                             )
                         )
 
-                        agent.decision = (
+                        state["decision"] = (
                             decision_engine.decide(
-                                agent.result
+                                state["result"]
                             )
                         )
 
                         current_cell.scanned = True
 
-                        agent.scanning = True
-                        agent.scan_timer = 0.0
+                        state["scanning"] = True
+                        state["scan_timer"] = 0.0
 
-                # SCANNING
                 else:
 
-                    agent.state = "SCANNING"
+                    state["robot_state"] = "SCANNING"
 
-                    agent.scan_timer += delta_time
+                    state["scan_timer"] += delta_time
 
-                    if agent.scan_timer >= 1.25:
+                    if state["scan_timer"] >= 1.25:
 
-                        agent.state = "DECIDING"
+                        state["robot_state"] = "DECIDING"
 
                         action = (
-                            agent.decision.action
+                            state["decision"].action
                         )
 
                         probability = (
-                            agent.result
+                            state["result"]
                             .cancer_probability
                         )
 
                         if action == "TARGET":
 
                             state["targets"] += 1
-                            agent.targets += 1
-
                             current_cell.targeted = True
 
                             if (
@@ -600,7 +614,6 @@ def main():
                                 state[
                                     "correct_targets"
                                 ] += 1
-
                             else:
                                 state[
                                     "false_targets"
@@ -609,13 +622,10 @@ def main():
                         elif action == "PASS":
 
                             state["passes"] += 1
-                            agent.passes += 1
 
                         else:
 
                             state["uncertain"] += 1
-                            agent.uncertain += 1
-
                             current_cell.uncertain = True
 
                         state["history"].insert(
@@ -624,7 +634,6 @@ def main():
                                 current_cell.cell.cell_id,
                                 action,
                                 probability,
-                                agent.robot_id,
                             ),
                         )
 
@@ -633,14 +642,11 @@ def main():
                         )
 
                         state["scanned"] += 1
-                        agent.cells_scanned += 1
 
-                        release_cell(
-                            current_cell,
-                            agent.robot_id,
-                        )
+                        state["current_cell"] = None
 
-                        agent.clear_target()
+                        state["scanning"] = False
+                        state["scan_timer"] = 0.0
 
         screen.fill(
             (15, 18, 24)
@@ -720,62 +726,53 @@ def main():
 
             visual_cell.draw(
                 screen,
-                selected=any(
+                selected=(
                     visual_cell
-                    is agent.current_cell
-                    for agent in swarm.agents
+                    is state["current_cell"]
                 ),
                 show_ground_truth=(
                     show_ground_truth
                 ),
             )
 
-        # Draw navigation paths and sensor ranges
-        # for every robot in the swarm.
-        for agent in swarm.agents:
+        current_cell = state["current_cell"]
 
-            robot = agent.visual
-            current_cell = agent.current_cell
-
-            if (
-                current_cell is not None
-                and not agent.scanning
-            ):
-                pygame.draw.line(
-                    screen,
-                    (70, 105, 125),
-                    (
-                        int(robot.position.x),
-                        int(robot.position.y),
-                    ),
-                    (
-                        int(current_cell.x),
-                        int(current_cell.y),
-                    ),
-                    1,
-                )
-
-            robot.draw_sensor_range(
-                screen
-            )
-
-        # Draw robot bodies after sensor overlays.
-        for agent in swarm.agents:
-
-            robot = agent.visual
-
-            pulse = (
-                math.sin(
-                    agent.scan_timer * 7
-                )
-                + 1
-            ) / 2
-
-            robot.draw(
+        # Show the destination chosen by the
+        # autonomous navigation algorithm.
+        if (
+            current_cell is not None
+            and not state["scanning"]
+        ):
+            pygame.draw.line(
                 screen,
-                scanning=agent.scanning,
-                pulse=pulse,
+                (70, 105, 125),
+                (
+                    int(robot.position.x),
+                    int(robot.position.y),
+                ),
+                (
+                    int(current_cell.x),
+                    int(current_cell.y),
+                ),
+                1,
             )
+
+        # Visualize the robot's simulated
+        # proximity-sensing region.
+        robot.draw_sensor_range(screen)
+
+        pulse = (
+            math.sin(
+                state["scan_timer"] * 7
+            )
+            + 1
+        ) / 2
+
+        robot.draw(
+            screen,
+            scanning=state["scanning"],
+            pulse=pulse,
+        )
 
         # Panel
         pygame.draw.rect(
@@ -830,8 +827,8 @@ def main():
             screen,
             small_font,
             (
-                f"Swarm distance: "
-                f"{swarm.total_distance:.0f} px"
+                f"Distance traveled: "
+                f"{robot.distance_traveled:.0f} px"
             ),
             935,
             108,
@@ -872,18 +869,11 @@ def main():
             (1245, 180),
         )
 
-        active_agent = next(
-            (
-                agent
-                for agent in swarm.agents
-                if agent.current_cell is not None
-            ),
-            None,
-        )
+        if state["current_cell"] is not None:
 
-        if active_agent is not None:
-
-            cell = active_agent.current_cell.cell
+            cell = state[
+                "current_cell"
+            ].cell
 
             draw_text(
                 screen,
@@ -929,28 +919,19 @@ def main():
                 390,
             )
 
-        scanning_agent = next(
-            (
-                agent
-                for agent in swarm.agents
-                if (
-                    agent.scanning
-                    and agent.result
-                    and agent.decision
-                )
-            ),
-            None,
-        )
-
-        if scanning_agent is not None:
+        if (
+            state["scanning"]
+            and state["result"]
+            and state["decision"]
+        ):
 
             probability = (
-                scanning_agent.result
+                state["result"]
                 .cancer_probability
             )
 
             action = (
-                scanning_agent.decision.action
+                state["decision"].action
             )
 
             colors = {
@@ -1003,14 +984,12 @@ def main():
             cell_id,
             action,
             probability,
-            robot_id,
         ) in state["history"]:
 
             draw_text(
                 screen,
                 small_font,
                 (
-                    f"R{robot_id}  "
                     f"Cell {cell_id:02d}  "
                     f"{action:<9} "
                     f"{probability:>6.1%}"
